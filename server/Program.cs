@@ -5,46 +5,28 @@ using Newtonsoft.Json;
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
 
-string authUsername = Environment.GetEnvironmentVariable("AUTH_USERNAME") ?? "admin";
-string authPassword = Environment.GetEnvironmentVariable("AUTH_PASSWORD") ?? "Ahmed@2026!Safe";
-
 var latestFrames = new ConcurrentDictionary<string, byte[]>();
 var latestReports = new ConcurrentDictionary<string, ReportData>();
 var frameTimestamps = new ConcurrentDictionary<string, long>();
 
-app.Use(async (context, next) =>
+// ملاحظة: تم حذف كود الحماية بالكامل
+
+app.MapPost("/report", async (HttpContext context) =>
 {
-    if (context.Request.Path.StartsWithSegments("/debug"))
-    {
-        await next();
-        return;
-    }
+    using var reader = new StreamReader(context.Request.Body);
+    string json = await reader.ReadToEndAsync();
 
-    string? authHeader = context.Request.Headers["Authorization"];
-    if (authHeader != null && authHeader.StartsWith("Basic "))
-    {
-        try
-        {
-            var encoded = authHeader.Substring("Basic ".Length).Trim();
-            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-            var sep = decoded.IndexOf(':');
-            if (sep != -1)
-            {
-                var user = decoded.Substring(0, sep);
-                var pass = decoded.Substring(sep + 1);
-                if (user == authUsername && pass == authPassword)
-                {
-                    await next();
-                    return;
-                }
-            }
-        }
-        catch { }
-    }
+    if (string.IsNullOrWhiteSpace(json))
+        return Results.BadRequest("Empty body");
 
-    context.Response.Headers["WWW-Authenticate"] = "Basic realm=\"ParentalControl\"";
-    context.Response.StatusCode = 401;
-    await context.Response.WriteAsync("Unauthorized");
+    var report = JsonConvert.DeserializeObject<ReportData>(json);
+    if (report == null || string.IsNullOrEmpty(report.ChildId))
+        return Results.BadRequest("Invalid data");
+
+    report.ReceivedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+    latestReports[report.ChildId] = report;
+
+    return Results.Ok(new { status = "ok" });
 });
 
 app.MapPost("/frame", async (HttpContext context) =>
@@ -75,24 +57,6 @@ app.MapGet("/frame/{childId}", (string childId) =>
         return Results.NotFound("No frame yet");
 
     return Results.File(bytes, "image/jpeg", enableRangeProcessing: true);
-});
-
-app.MapPost("/report", async (HttpContext context) =>
-{
-    using var reader = new StreamReader(context.Request.Body);
-    string json = await reader.ReadToEndAsync();
-
-    if (string.IsNullOrWhiteSpace(json))
-        return Results.BadRequest("Empty body");
-
-    var report = JsonConvert.DeserializeObject<ReportData>(json);
-    if (report == null || string.IsNullOrEmpty(report.ChildId))
-        return Results.BadRequest("Invalid data");
-
-    report.ReceivedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-    latestReports[report.ChildId] = report;
-
-    return Results.Ok(new { status = "ok" });
 });
 
 app.MapGet("/children", () =>
@@ -146,16 +110,16 @@ static string BuildDashboard()
     sb.Append("<style>");
     sb.Append("body{background:#0f172a;color:#e2e8f0;padding:20px;font-family:sans-serif;}");
     sb.Append("h1{color:#60a5fa;text-align:center;}");
-    sb.Append(".child-card{background:#1e293b;border-radius:16px;padding:20px;margin:20px auto;max-width:1100px;}");
-    sb.Append(".child-header{display:flex;justify-content:space-between;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #334155;}");
+    sb.Append(".child-card{background:#1e293b;border-radius:16px;padding:20px;margin:20px 0;}");
+    sb.Append(".child-header{display:flex;justify-content:space-between;}");
     sb.Append(".child-name{font-size:22px;font-weight:bold;color:#60a5fa;}");
     sb.Append(".dot{width:10px;height:10px;border-radius:50%;background:#22c55e;display:inline-block;}");
     sb.Append(".dot.offline{background:#ef4444;}");
-    sb.Append(".stream-img{max-width:100%;max-height:70vh;display:block;margin:auto;}");
-    sb.Append(".stream-container{background:#000;border-radius:12px;padding:10px;margin:15px 0;text-align:center;min-height:300px;}");
+    sb.Append(".stream-img{max-width:100%;max-height:70vh;display:block;margin:10px auto;border-radius:8px;}");
+    sb.Append(".stream-container{background:#000;border-radius:12px;padding:10px;text-align:center;}");
     sb.Append(".no-stream{color:#64748b;padding:80px 20px;}");
-    sb.Append(".info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:15px;}");
-    sb.Append(".info-item{background:#0f172a;padding:12px;border-radius:8px;border-left:3px solid #60a5fa;}");
+    sb.Append(".info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:10px;}");
+    sb.Append(".info-item{background:#0f172a;padding:12px;border-radius:8px;}");
     sb.Append(".info-label{color:#94a3b8;font-size:12px;text-transform:uppercase;}");
     sb.Append(".info-value{color:#e2e8f0;font-size:15px;margin-top:4px;}");
     sb.Append("</style>");
@@ -176,18 +140,18 @@ static string BuildDashboard()
     sb.Append("  }");
     sb.Append("  let h = '';");
     sb.Append("  for(const x of children){");
-    sb.Append("    const live = x.last_frame_ago_ms >= 0 && x.last_frame_ago_ms < 5000;");
+    sb.Append("    const live = x.last_frame_ago_ms >= 0 && x.last_frame_ago_ms < 10000;");
     sb.Append("    h += '<div class=\"child-card\">';");
     sb.Append("    h += '<div class=\"child-header\">';");
     sb.Append("    h += '<div class=\"child-name\">👤 ' + x.child_id + '</div>';");
-    sb.Append("    h += '<div><span class=\"dot ' + (live ? '' : 'offline') + '\"></span> ' + (live ? 'LIVE' : 'Offline') + '</div>';");
+    sb.Append("    h += '<div><span class=\"dot ' + (live ? '' : 'offline') + '\"></span> ' + (live ? 'LIVE' : 'OFFLINE') + '</div>';");
     sb.Append("    h += '</div>';");
     sb.Append("    h += '<div class=\"stream-container\"><img class=\"stream-img\" src=\"/frame/' + x.child_id + '?t=' + Date.now() + '\"></div>';");
     sb.Append("    h += '<div class=\"info-grid\">';");
-    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">Active Window</div><div class=\"info-value\">' + (x.active_window || '-') + '</div></div>';");
-    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">IP</div><div class=\"info-value\">' + (x.ip || '-') + '</div></div>';");
-    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">Last Update</div><div class=\"info-value\">' + (x.last_update || '-') + '</div></div>';");
-    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">Frame Age</div><div class=\"info-value\">' + (x.last_frame_ago_ms >= 0 ? x.last_frame_ago_ms + ' ms' : 'No frames') + '</div></div>';");
+    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">Last Update</div><div class=\"info-value\">' + (x.last_update || 'N/A') + '</div></div>';");
+    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">Active Window</div><div class=\"info-value\">' + (x.active_window || 'N/A') + '</div></div>';");
+    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">IP Address</div><div class=\"info-value\">' + (x.ip || 'N/A') + '</div></div>';");
+    sb.Append("    h += '<div class=\"info-item\"><div class=\"info-label\">Running Apps</div><div class=\"info-value\">' + x.running_apps_count + '</div></div>';");
     sb.Append("    h += '</div></div>';");
     sb.Append("  }");
     sb.Append("  c.innerHTML = h;");
