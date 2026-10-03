@@ -52,6 +52,38 @@ app.MapPost("/frame", async (HttpContext context) =>
 });
 
 // ============ الحصول على آخر إطار لطفل ============
+// ============ بث MJPEG مباشر ============
+app.MapGet("/stream/{childId}", async (string childId, HttpContext context) =>
+{
+    context.Response.ContentType = "multipart/x-mixed-replace; boundary=--frame";
+    context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+    context.Response.Headers["Pragma"] = "no-cache";
+    context.Response.Headers["Expires"] = "0";
+
+    var boundary = Encoding.UTF8.GetBytes("--frame\r\n");
+    var contentType = Encoding.UTF8.GetBytes("Content-Type: image/jpeg\r\n\r\n");
+    var endBoundary = Encoding.UTF8.GetBytes("\r\n");
+
+    while (!context.RequestAborted.IsCancellationRequested)
+    {
+        if (latestFrames.TryGetValue(childId, out var bytes) && bytes.Length > 0)
+        {
+            try
+            {
+                await context.Response.Body.WriteAsync(boundary, 0, boundary.Length);
+                await context.Response.Body.WriteAsync(contentType, 0, contentType.Length);
+                await context.Response.Body.WriteAsync(bytes, 0, bytes.Length);
+                await context.Response.Body.WriteAsync(endBoundary, 0, endBoundary.Length);
+                await context.Response.Body.FlushAsync();
+            }
+            catch { break; }
+        }
+
+        await Task.Delay(100); // 10 إطار في الثانية
+    }
+});
+
+// مسار احتياطي لعرض إطار واحد (للتوافق)
 app.MapGet("/frame/{childId}", (string childId) =>
 {
     if (!latestFrames.TryGetValue(childId, out var bytes))
@@ -162,7 +194,7 @@ static string BuildDashboard()
     sb.Append("    h += '</div>';");
     sb.Append("    h += '<div class=\"stream-container\">';");
     sb.Append("    if(x.has_live_frame) {");
-    sb.Append("      h += '<img class=\"stream-img\" src=\"/frame/' + x.child_id + '?t=' + Date.now() + '\">';");
+    sb.Append("      h += '<img class=\"stream-img\" src=\"/stream/' + x.child_id + '\">';");
     sb.Append("    } else {");
     sb.Append("      h += '<div class=\"no-stream\">📷 لا توجد صورة</div>';");
     sb.Append("    }");
@@ -176,15 +208,8 @@ static string BuildDashboard()
     sb.Append("  }");
     sb.Append("  c.innerHTML = h;");
     sb.Append("}");
-    sb.Append("function refreshStreams(){");
-    sb.Append("  document.querySelectorAll('.stream-img').forEach(i => {");
-    sb.Append("    const base = i.src.split('?')[0];");
-    sb.Append("    i.src = base + '?t=' + Date.now();");
-    sb.Append("  });");
-    sb.Append("}");
     sb.Append("loadChildren();");
-    sb.Append("setInterval(refreshStreams, 500);");
-    sb.Append("setInterval(loadChildren, 3000);");
+sb.Append("setInterval(loadChildren, 5000);");
     sb.Append("</script></body></html>");
     return sb.ToString();
 }
