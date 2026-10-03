@@ -209,7 +209,7 @@ static string BuildDashboard()
     sb.Append("  c.innerHTML = h;");
     sb.Append("}");
     sb.Append("loadChildren();");
-sb.Append("setInterval(loadChildren, 5000);");
+    sb.Append("setInterval(loadChildren, 5000);");
     sb.Append("</script></body></html>");
     return sb.ToString();
 }
